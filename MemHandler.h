@@ -40,8 +40,8 @@ struct Memory_Manager
 
 static Memory_Manager *
 InitializeMemoryManager(uint64_t ManagerSize = MANAGER_SIZE_DEFAULT, 
-					   uint64_t InitialSize = INITIAL_ALLOCATION_SIZE, 
-					   uint64_t MaxSize = INITIAL_ALLOCATION_SIZE)
+			uint64_t InitialSize = INITIAL_ALLOCATION_SIZE, 
+			uint64_t MaxSize = INITIAL_ALLOCATION_SIZE)
 {
 	Memory_Manager * Manager = (Memory_Manager *)VirtualAlloc(0,InitialSize,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);
 
@@ -125,7 +125,7 @@ RemoveFromFreedMemory(Memory_Manager * Manager, uint32_t BlockToRemoveIndex)
 }
 
 static void * 
-Allocate(size_t AllocSize, Memory_Manager * Manager)
+Allocate(Memory_Manager * Manager, size_t AllocSize)
 {
 	void * ReturnAddress = 0;
 
@@ -174,7 +174,7 @@ Allocate(size_t AllocSize, Memory_Manager * Manager)
 }
 
 static void 
-Free(size_t FreeSize, void * MemLocation, Memory_Manager * Manager)
+Free(Memory_Manager * Manager, void * MemLocation, size_t FreeSize)
 {		
 	Manager->ManagerInfo.FreedMemorySize += FreeSize;		
 	Manager->FreedMemory[Manager->ManagerInfo.LastFreedIndex].MemoryLocation = (uint8_t *)MemLocation;
