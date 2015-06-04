@@ -17,7 +17,7 @@
 /*
 ///////////////////////////////////EXAMPLE USAGE OF MACROS////////////////////////////////////
 Struct_t TheStruct = ALLOCATEMEM(Struct_t, Manager);                       <-Usage
-					 (Struct_t *) Allocate(sizeof(Struct_t *), Manager);   <-Macro Expansion
+(Struct_t *) Allocate(sizeof(Struct_t *), Manager);                        <-Macro Expansion
 
 FreeMem(TheStruct, Manager)                                                <-Usage
 Free(sizeof(TheStruct), (void *) (&TheStruct), Manager);                   <-Macro Expansion
@@ -157,8 +157,8 @@ Grow(Memory_Manager * Manager, size_t AllocSize)
 	//virtual address in the initial allocation that is guaranteed to be far enough away from all other allocations
 	//that you do not have to worry about grow() impinging on a previous allocation.
 	
-	//Dont need to store the new address because we know it is contiguous with the previously allocated memory block,
-	//we just need to reserve the virtual address space for the program
+	//Dont need to store the new address because we know it is contiguous with the previously allocated virtual 
+	//memory block, we just need to reserve the virtual address space for the program
 	void * ScratchAddress = (uint8_t *)VirtualAlloc((void *)FinalAddressAllocated, NewAllocSize, MEM_RESERVE|MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	Manager->ManagerInfo.TotalAllocationSize += NewAllocSize;
 	Manager->ManagerInfo.RemainingUnallocated = NewAllocSize;
@@ -170,6 +170,8 @@ Allocate(size_t AllocSize, Memory_Manager * Manager)
 {
 	void * ReturnAddress = 0;
 
+	//only check freed memory blocks if the entirety of the virtual allocation has been used
+	//and the allocation size is at the maximum allowed for the app.
 	if(Manager->ManagerInfo.RemainingUnallocated < AllocSize &&
 	  (Manager->ManagerInfo.TotalAllocationSize - Manager->ManagerInfo.MaxAllocationSize) < AllocSize)
 	{
