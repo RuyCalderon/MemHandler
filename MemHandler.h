@@ -5,13 +5,30 @@
 #include "stdint.h"
 #endif
 
+#if !defined(cmath)
+#include <cmath>
+#endif
+
 #if !defined(Assert)
 #define Assert(X) if(!(X)){(*(int *)0 = 0;}
 #endif
 
-#define MANAGER_SIZE_DEFAULT (1024*64)
-#define INITIAL_ALLOCATION_SIZE (512*1024*1024) // one gig to start let's say
 
+/*
+///////////////////////////////////EXAMPLE USAGE OF MACROS////////////////////////////////////
+Struct_t TheStruct = ALLOCATEMEM(Struct_t, Manager);                       <-Usage
+					 (Struct_t *) Allocate(sizeof(Struct_t *), Manager);   <-Macro Expansion
+
+FreeMem(TheStruct, Manager)                                                <-Usage
+Free(sizeof(TheStruct), (void *) (&TheStruct), Manager);                   <-Macro Expansion
+/////////////////////////////////////////////////////////////////////////////////////////////
+*/
+
+#define ALLOCATEMEM(Type_t,Manager) (Type_t *) Allocate(sizeof(Type_t), Manager);
+#define FREEMEM(Struct, Manager) FreeMemory Free(sizeof(Struct), (void * ) (&Struct), Manager);
+
+#define MANAGER_SIZE_DEFAULT (1024*64)
+#define INITIAL_ALLOCATION_SIZE (512*1024*1024) // half a gig by default let's say
 
 struct FreedMemoryBlock
 {
@@ -24,7 +41,10 @@ struct ManagerHeader
 	int FreedMemorySize;
 	int FreedMemorySlots;
 	int LastFreedIndex;
+
 	size_t TotalAllocationSize;
+	size_t InitialAllocationSize;
+	size_t MaxAllocationSize;
 	size_t RemainingUnallocated;
 	size_t ManagerSize;
 
@@ -38,18 +58,23 @@ struct Memory_Manager
 	uint8_t * Memory;
 };
 
+//Something to note: by default manager cannot grow in size!! Please remember that if you do want to have a dynamic allocator
+//you need to specify the the details of your allocation.
 static Memory_Manager *
 InitializeMemoryManager(uint64_t ManagerSize = MANAGER_SIZE_DEFAULT, 
-			uint64_t InitialSize = INITIAL_ALLOCATION_SIZE, 
-			uint64_t MaxSize = INITIAL_ALLOCATION_SIZE)
+						uint64_t InitialSize = INITIAL_ALLOCATION_SIZE, 
+						uint64_t MaxSize = INITIAL_ALLOCATION_SIZE)
 {
 	Memory_Manager * Manager = (Memory_Manager *)VirtualAlloc(0,InitialSize,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);
 
 	Manager->ManagerInfo.ManagerSize = ManagerSize;
+	Manager->ManagerInfo.TotalAllocationSize = InitialSize;
+	Manager->ManagerInfo.InitialAllocationSize = InitialSize;
+	Manager->ManagerInfo.MaxAllocationSize = MaxSize;
+	Manager->ManagerInfo.RemainingUnallocated = InitialSize - ManagerSize;
+
 	Manager->ManagerInfo.FreedMemorySize = 0;
 	Manager->ManagerInfo.LastFreedIndex = 0;
-	Manager->ManagerInfo.TotalAllocationSize = InitialSize;
-	Manager->ManagerInfo.RemainingUnallocated = InitialSize - ManagerSize;
 	Manager->ManagerInfo.FreedMemorySlots = (ManagerSize - sizeof(ManagerHeader)) / sizeof(FreedMemoryBlock);
 	Manager->FreedMemory = (FreedMemoryBlock *)(Manager + sizeof(ManagerHeader));
 
@@ -60,8 +85,7 @@ InitializeMemoryManager(uint64_t ManagerSize = MANAGER_SIZE_DEFAULT,
 }
 
 //if a new freed memory block is added it needs to be inserted into the queue in the correct
-//location to make the eventual reallocation faster. There are better ways of doing this, this
-//one is fine for now though
+//location. This utility function does that.
 static void
 InsertFreedMemory(Memory_Manager * Manager)
 {
@@ -86,10 +110,6 @@ InsertFreedMemory(Memory_Manager * Manager)
 
 //if allocating from an already-existing freedblock, need to resort it's location in 
 //the queue to find the the new correct location.
-
-// [BLOCKTORESORT] smaller than it should be
-// [BLOCKTOCHECK]  if(BlockToCheck is larger than BlockToResort) then BlockToResort goes in the place of BlockToCheck
-// 				   if(BlockToCheck is smaller than BlockToResort) then BlockToResort is in the right place
 static void
 ReSortFreedMemory(Memory_Manager * Manager, uint32_t BlockToReSortIndex)
 {
@@ -124,12 +144,34 @@ RemoveFromFreedMemory(Memory_Manager * Manager, uint32_t BlockToRemoveIndex)
 	Manager->FreedMemory[--Manager->ManagerInfo.LastFreedIndex] = {};
 }
 
+static size_t
+Grow(Memory_Manager * Manager, size_t AllocSize)
+{
+	uint8_t * FinalAddressAllocated = (uint8_t *)Manager + Manager->ManagerInfo.InitialAllocationSize;
+	
+	size_t NewAllocSize = AllocSize;;
+	size_t CurrentAllocationSize = Manager->ManagerInfo.InitialAllocationSize;
+	size_t MaxAllocationSize = Manager->ManagerInfo.MaxAllocationSize;
+
+	//If All allocations done by Memhandler this will always be safe. If not, It is recommended that you specify an
+	//virtual address in the initial allocation that is guaranteed to be far enough away from all other allocations
+	//that you do not have to worry about grow() impinging on a previous allocation.
+	
+	//Dont need to store the new address because we know it is contiguous with the previously allocated memory block,
+	//we just need to reserve the virtual address space for the program
+	void * ScratchAddress = (uint8_t *)VirtualAlloc((void *)FinalAddressAllocated, NewAllocSize, MEM_RESERVE|MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	Manager->ManagerInfo.TotalAllocationSize += NewAllocSize;
+	Manager->ManagerInfo.RemainingUnallocated = NewAllocSize;
+	return NewAllocSize;
+}
+
 static void * 
-Allocate(Memory_Manager * Manager, size_t AllocSize)
+Allocate(size_t AllocSize, Memory_Manager * Manager)
 {
 	void * ReturnAddress = 0;
 
-	if(Manager->ManagerInfo.RemainingUnallocated < AllocSize)
+	if(Manager->ManagerInfo.RemainingUnallocated < AllocSize &&
+	  (Manager->ManagerInfo.TotalAllocationSize - Manager->ManagerInfo.MaxAllocationSize) < AllocSize)
 	{
 		for(uint32_t FreeBlock = 0;
 			FreeBlock < Manager->ManagerInfo.LastFreedIndex;
@@ -151,6 +193,13 @@ Allocate(Memory_Manager * Manager, size_t AllocSize)
 				}
 			}
 		}
+
+		if(!ReturnAddress)
+		{
+			DefragFreed(Manager);
+			//absolutely repulsive but it works
+			ReturnAddress = Allocate(AllocSize,Manager);
+		}
 		Assert(ReturnAddress);
 		return ReturnAddress;
 	}
@@ -158,8 +207,13 @@ Allocate(Memory_Manager * Manager, size_t AllocSize)
 	{
 		if(Manager->ManagerInfo.RemainingUnallocated < AllocSize)
 		{
-			//Grow
-			Assert((uint8_t)"Ya Done Goofed" == 0);
+			size_t AddedSize = Grow(Manager,AllocSize - Manager->ManagerInfo.RemainingUnallocated);
+			Assert(AddedSize + Manager->ManagerInfo.RemainingUnallocated >= AllocSize);
+
+			ReturnAddress = (void *)Manager->ManagerInfo.NextAddress;
+
+			Manager->ManagerInfo.NextAddress = (uint8_t*)ReturnAddress + AllocSize;
+			Manager->ManagerInfo.RemainingUnallocated -= AllocSize;
 		}
 		else
 		{
@@ -174,7 +228,7 @@ Allocate(Memory_Manager * Manager, size_t AllocSize)
 }
 
 static void 
-Free(Memory_Manager * Manager, void * MemLocation, size_t FreeSize)
+Free(size_t FreeSize, void * MemLocation, Memory_Manager * Manager)
 {		
 	Manager->ManagerInfo.FreedMemorySize += FreeSize;		
 	Manager->FreedMemory[Manager->ManagerInfo.LastFreedIndex].MemoryLocation = (uint8_t *)MemLocation;
@@ -184,24 +238,7 @@ Free(Memory_Manager * Manager, void * MemLocation, size_t FreeSize)
 	++Manager->ManagerInfo.LastFreedIndex;
 }
 
-
-/*
-These are for later
-static void
-Grow()
-{
-
-}
-
-static void 
-Shrink()
-{
-
-}
-
-*/
-
-#undef MANAGER_SIZE_DEFAULT
-#undef INITIAL_ALLOCATION_SIZE
+#undef MANAGER_SIZE_DEFAULT 
+#undef INITIAL_ALLOCATION_SIZE 
 
 #endif
