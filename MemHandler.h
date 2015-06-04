@@ -193,13 +193,7 @@ Allocate(size_t AllocSize, Memory_Manager * Manager)
 				}
 			}
 		}
-
-		if(!ReturnAddress)
-		{
-			DefragFreed(Manager);
-			//absolutely repulsive but it works
-			ReturnAddress = Allocate(AllocSize,Manager);
-		}
+		
 		Assert(ReturnAddress);
 		return ReturnAddress;
 	}
