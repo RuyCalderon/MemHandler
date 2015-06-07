@@ -10,7 +10,7 @@
 #endif
 
 #if !defined(Assert)
-#define Assert(X) if(!(X)){(*(int *)0 = 0;}
+#define Assert(X) if(!(X)){*(int *)0 = 0;}
 #endif
 
 
