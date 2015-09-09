@@ -1,13 +1,8 @@
 #if !defined(MEMHANDLER_H)
 #define MEMHANDLER_H
 
-#if !defined(stdint)
 #include "stdint.h"
-#endif
-
-#if !defined(cmath)
 #include <cmath>
-#endif
 
 #if !defined(Assert)
 #define Assert(X) if(!(X)){*(int *)0 = 0;}
